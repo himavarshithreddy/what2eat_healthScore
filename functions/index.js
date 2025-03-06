@@ -1,7 +1,4 @@
 const functions = require("firebase-functions");
-const admin = require("firebase-admin");
-admin.initializeApp();
-const db = admin.firestore();
 
 // Unit conversion handler with field name flexibility
 function parseNutritionValue(rawValue, nutrientType) {
@@ -22,7 +19,9 @@ function parseNutritionValue(rawValue, nutrientType) {
       return unit === 'g' ? value * 1000 : value; // g to mg
 
     case 'mass':
-      return unit === 'mg' ? value / 1000 : value; // mg to g
+      if (unit === 'mg') return value / 1000; // mg to g
+      if (unit === 'mcg') return value / 1_000_000; // mcg to g
+      return value;
 
     case 'percentage':
       return unit === '%' ? value : 0;
@@ -39,7 +38,7 @@ function calculateNegativePoints(nutrition) {
   const energy = parseNutritionValue(nutrition.energy || '0', 'energy');
   const sugars = parseNutritionValue(sugarsValue, 'mass');
   const saturatedFat = parseNutritionValue(
-    nutrition.customNutritionFields?.saturatedFat || '0', 'mass'
+    nutrition.saturatedFat || '0', 'mass'
   );
   const sodium = parseNutritionValue(nutrition.sodium || '0', 'sodium');
 
@@ -93,13 +92,7 @@ function calculatePositivePoints(nutrition) {
 }
 
 // Main calculation function
-async function calculateHealthScore(productId) {
-  const productRef = db.collection('products').doc(productId);
-  const productDoc = await productRef.get();
-
-  if (!productDoc.exists) throw new Error('Product not found');
-  
-  const nutrition = productDoc.data().nutritionInfo || {};
+function calculateHealthScore(nutrition) {
   const N = calculateNegativePoints(nutrition);
   const P = calculatePositivePoints(nutrition);
 
@@ -119,18 +112,14 @@ async function calculateHealthScore(productId) {
   const normalized = ((fsaScore - minScore) / (maxScore - minScore)) * 100;
   const healthScore = Math.round(100 - Math.min(100, Math.max(0, normalized)));
 
-  // Update document
-  await productRef.update({
+  return {
     healthScore,
-    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     calculationDetails: {
       negativePoints: N,
       positivePoints: P.total,
       fsaScore
     }
-  });
-
-  return healthScore;
+  };
 }
 
 // Firebase HTTP Function with CORS
@@ -146,11 +135,11 @@ exports.calculateHealthScore = functions.https.onRequest(async (req, res) => {
   try {
     if (req.method !== 'POST') return res.status(400).send('POST required');
     
-    const { productId } = req.body;
-    if (!productId) return res.status(400).json({ error: 'productId required' });
+    const { nutrition } = req.body;
+    if (!nutrition) return res.status(400).json({ error: 'Nutrition data required' });
 
-    const score = await calculateHealthScore(productId);
-    res.json({ productId, healthScore: score });
+    const result = calculateHealthScore(nutrition);
+    res.json(result);
     
   } catch (error) {
     console.error('Error:', error);
