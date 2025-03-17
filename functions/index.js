@@ -32,54 +32,57 @@ function parseNutritionValue(rawValue, nutrientType) {
 }
 
 // Negative Points Calculation
-function calculateNegativePoints(nutrition) {
+function calculateNegativePoints(nutrition, isBeverage = 0) {
   // Handle field name variations
-  const sugarsValue = nutrition.TotalSugars || nutrition.sugars || '0';
   const energy = parseNutritionValue(nutrition.energy || '0', 'energy');
+  const sugarsValue = nutrition.TotalSugars || nutrition.sugars || '0';
   const sugars = parseNutritionValue(sugarsValue, 'mass');
-  const saturatedFat = parseNutritionValue(
-    nutrition.saturatedFat || '0', 'mass'
-  );
+  const saturatedFat = parseNutritionValue(nutrition.saturatedFat || '0', 'mass');
   const sodium = parseNutritionValue(nutrition.sodium || '0', 'sodium');
 
-  // Energy thresholds (kcal/100g)
-  const energyThresholds = [80, 160, 240, 320, 400, 480, 560, 640, 720, 800];
+  let energyThresholds, sugarsThresholds, satFatThresholds, sodiumThresholds;
+
+  if (isBeverage) {
+    // Beverage thresholds (per 100ml)
+    energyThresholds = [7.2, 14.3, 21.5, 28.5, 35.9, 43.0, 50.2, 57.4, 64.5];
+    sugarsThresholds = [0, 1.5, 3.0, 4.5, 6.0, 7.5, 9.0, 10.5, 12.0, 13.5];
+    satFatThresholds = [0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0];
+    sodiumThresholds = [0, 45, 90, 135, 180, 225, 270, 315, 360, 405];
+  } else {
+    // Food thresholds (per 100g)
+    energyThresholds = [80, 160, 240, 320, 400, 480, 560, 640, 720, 800];
+    sugarsThresholds = [4.5, 9.0, 13.5, 18.0, 22.5, 27.0, 31.0, 36.0, 40.0, 45.0];
+    satFatThresholds = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+    sodiumThresholds = [90, 180, 270, 360, 450, 540, 630, 720, 810, 900];
+  }
+
   const energyPoints = energyThresholds.filter(t => energy > t).length;
-
-  // Sugars thresholds (g/100g)
-  const sugarsThresholds = [7.2, 14.3, 21.5, 28.5, 35.9, 43.0, 50.2, 57.4, 64.5];
   const sugarsPoints = sugarsThresholds.filter(t => sugars > t).length;
-
-  // Saturated Fat thresholds (g/100g)
-  const satFatThresholds = [4.5, 9.0, 13.5, 18.0, 22.5, 27.0, 31.0, 36.0, 40.0, 45.0];
   const satFatPoints = satFatThresholds.filter(t => saturatedFat > t).length;
-
-  // Sodium thresholds (mg/100g)
-  const sodiumThresholds = [90, 180, 270, 360, 450, 540, 630, 720, 810, 900];
   const sodiumPoints = sodiumThresholds.filter(t => sodium > t).length;
 
   return energyPoints + sugarsPoints + satFatPoints + sodiumPoints;
 }
 
 // Positive Points Calculation
-function calculatePositivePoints(nutrition) {
+function calculatePositivePoints(nutrition, isBeverage = 0) {
   // Handle field name variations
   const fiberValue = nutrition.dietaryfiber || nutrition.fiber || '0';
   const fvln = parseNutritionValue(nutrition.fruitsVegetablesNuts || '0', 'percentage');
   const fiber = parseNutritionValue(fiberValue, 'mass');
   const protein = parseNutritionValue(nutrition.protein || '0', 'mass');
 
-  // FVLN points
+  // FVNL points (fruits, vegetables, nuts, legumes)
   let fvlnPoints = 0;
   if (fvln >= 80) fvlnPoints = 5;
   else if (fvln >= 60) fvlnPoints = 2;
   else if (fvln >= 40) fvlnPoints = 1;
 
-  // Fiber thresholds (g/100g)
+  // Fiber thresholds (g/100g for both foods and beverages)
   const fiberThresholds = [0.7, 1.4, 2.1, 2.8, 3.5];
   const fiberPoints = fiberThresholds.filter(t => fiber > t).length;
 
-  // Protein thresholds (g/100g)
+  // Protein thresholds (g/100g for both foods and beverages)
   const proteinThresholds = [1.6, 3.2, 4.8, 6.4, 8.0];
   const proteinPoints = proteinThresholds.filter(t => protein > t).length;
 
@@ -92,9 +95,9 @@ function calculatePositivePoints(nutrition) {
 }
 
 // Main calculation function
-function calculateHealthScore(nutrition) {
-  const N = calculateNegativePoints(nutrition);
-  const P = calculatePositivePoints(nutrition);
+function calculateHealthScore(nutrition, isBeverage = 0) {
+  const N = calculateNegativePoints(nutrition, isBeverage);
+  const P = calculatePositivePoints(nutrition, isBeverage);
 
   // Calculate FSA-score
   let fsaScore;
@@ -135,10 +138,11 @@ exports.calculateHealthScore = functions.https.onRequest(async (req, res) => {
   try {
     if (req.method !== 'POST') return res.status(400).send('POST required');
     
-    const { nutrition } = req.body;
+    const { nutrition, isBeverage } = req.body;
     if (!nutrition) return res.status(400).json({ error: 'Nutrition data required' });
 
-    const result = calculateHealthScore(nutrition);
+    const isBeverageFlag = isBeverage ? 1 : 0; // Default to 0 if not provided
+    const result = calculateHealthScore(nutrition, isBeverageFlag);
     res.json(result);
     
   } catch (error) {
